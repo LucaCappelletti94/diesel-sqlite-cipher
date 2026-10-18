@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust tools
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - name: Format
+        run: cargo +stable fmt --check
+      - name: Clippy
+        run: cargo +stable clippy -p diesel-sqlite-cipher --all-targets -- -D warnings
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +stable doc -p diesel-sqlite-cipher --no-deps
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        codec: [none, sqlcipher, sqlite3mc]
+    env:
+      DIESEL_SQLITE_CIPHER_TEST_CODEC: ${{ matrix.codec }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libssl-dev
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build page codec
+        if: matrix.codec != 'none'
+        env:
+          CODEC: ${{ matrix.codec }}
+        run: |
+          source_package=sqlcipher-src
+          if [ "$CODEC" = sqlite3mc ]; then source_package=sqlite3mc-src; fi
+          manifest=$(cargo +stable metadata --format-version 1 | jq -r --arg name "$source_package" '.packages[] | select(.name == $name) | .manifest_path')
+          source_dir=$(dirname "$manifest")
+          codec_dir="$GITHUB_WORKSPACE/target/codec"
+          mkdir -p "$codec_dir"
+          if [ "$CODEC" = sqlcipher ]; then
+            cc -O2 -fPIC -shared -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 \
+              -DSQLITE_EXTRA_INIT=sqlcipher_extra_init \
+              -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown \
+              -DSQLCIPHER_CRYPTO_OPENSSL -DSQLITE_THREADSAFE=1 \
+              -DSQLITE_ENABLE_COLUMN_METADATA "$source_dir/sqlcipher/sqlcipher.c" \
+              -o "$codec_dir/libsqlite3.so" -lcrypto -lm -ldl -pthread
+          else
+            cc -O2 -fPIC -shared -DSQLITE_THREADSAFE=1 -DSQLITE_TEMP_STORE=2 \
+              -DSQLITE_ENABLE_COLUMN_METADATA \
+              "$source_dir/sqlite3mc/sqlite3mc_amalgamation.c" \
+              -o "$codec_dir/libsqlite3.so" -lm -ldl -pthread
+          fi
+          echo "SQLITE3_LIB_DIR=$codec_dir" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$codec_dir" >> "$GITHUB_ENV"
+          echo "SQLITE3_NO_PKG_CONFIG=1" >> "$GITHUB_ENV"
+      - name: Tests
+        run: cargo +stable test --release -p diesel-sqlite-cipher
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.88
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Check minimum Rust version
+        run: cargo +1.88.0 check -p diesel-sqlite-cipher --lib

@@ -1,0 +1,34 @@
+[package]
+name = "diesel-sqlite-cipher"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Typed raw-key statements for Diesel with SQLCipher and SQLite3 Multiple Ciphers"
+repository = "https://github.com/LucaCappelletti94/diesel-sqlite-cipher"
+readme = "README.md"
+publish = false
+
+[dependencies]
+arrayvec = { version = "0.7", features = ["zeroize"] }
+diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "upstream/secret-safe-key-diagnostics", default-features = false, features = ["sqlite"] }
+thiserror = "2"
+zeroize = "1.8"
+
+[dev-dependencies]
+parking_lot = "0.12"
+sqlcipher-src = "419.0.6"
+sqlite3mc-src = "205.1.0"
+tempfile = "3"
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
