@@ -51,7 +51,7 @@ impl SqliteCipherConnectionExt for SqliteConnection {
         schema: &str,
         key: &RawKey,
     ) -> Result<(), Error> {
-        require_codec(self)?;
+        require_codec(self, None)?;
         AttachDatabaseWithKey { path, schema, key }.execute(self)?;
         Ok(())
     }

@@ -20,7 +20,7 @@ impl Pragma for Cipher {
 }
 
 impl WritePragma for Cipher {
-    fn value(&self) -> PragmaLiteral {
+    fn value(&self) -> PragmaLiteral<'_> {
         PragmaLiteral::Keyword("sqlcipher")
     }
 }
@@ -33,7 +33,7 @@ impl Pragma for Legacy {
 }
 
 impl WritePragma for Legacy {
-    fn value(&self) -> PragmaLiteral {
+    fn value(&self) -> PragmaLiteral<'_> {
         4.into()
     }
 }

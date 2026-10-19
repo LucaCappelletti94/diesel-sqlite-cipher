@@ -4,10 +4,12 @@ mod attach;
 mod codec;
 mod error;
 mod key;
+mod pragma;
 
 pub use attach::SqliteCipherConnectionExt;
 pub use error::Error;
 pub use key::RawKey;
+pub use pragma::Key;
 
 #[cfg(doctest)]
 mod compile_fail_tests {

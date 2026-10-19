@@ -43,13 +43,16 @@ impl ReadPragma for CipherName {
     type Row = CodecReply;
 }
 
-pub(crate) fn require_codec(connection: &mut SqliteConnection) -> Result<(), Error> {
+pub(crate) fn require_codec(
+    connection: &mut SqliteConnection,
+    schema: Option<&str>,
+) -> Result<(), Error> {
     match CipherVersion::get(connection) {
         Ok(CodecReply(true)) => return Ok(()),
         Ok(CodecReply(false)) | Err(QueryError::NotFound) => {}
         Err(error) => return Err(error.into()),
     }
-    match CipherName::get(connection, None) {
+    match CipherName::get(connection, schema) {
         Ok(CodecReply(true)) => Ok(()),
         Ok(CodecReply(false)) | Err(QueryError::NotFound) => Err(Error::CodecUnavailable),
         Err(error) => Err(error.into()),
