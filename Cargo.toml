@@ -18,6 +18,7 @@ zeroize = "1.8"
 [dev-dependencies]
 parking_lot = "0.12"
 sqlcipher-src = "419.0.6"
+sqlite3mc-src = "205.1.0"
 tempfile = "3"
 
 [lints.rust]
