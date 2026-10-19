@@ -8,23 +8,60 @@ permissions:
   contents: read
 
 jobs:
-  rust:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      DIESEL_SQLITE_CIPHER_TEST_CODEC: none
-      COVERAGE_FILE: target/coverage/none.lcov
-      RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - name: Install Rust tools
         run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
-      - run: cargo +stable fmt --check
-      - run: cargo +stable clippy -p diesel-sqlite-cipher --all-targets -- -D warnings
-      - run: cargo +stable test --release -p diesel-sqlite-cipher
-      - run: cargo +stable doc -p diesel-sqlite-cipher --no-deps
+      - name: Format
+        run: cargo +stable fmt --check
+      - name: Clippy
+        run: cargo +stable clippy -p diesel-sqlite-cipher --all-targets -- -D warnings
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +stable doc -p diesel-sqlite-cipher --no-deps
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        codec: [none, sqlite3mc]
+    env:
+      DIESEL_SQLITE_CIPHER_TEST_CODEC: ${{ matrix.codec }}
+      COVERAGE_FILE: target/coverage/${{ matrix.codec }}.lcov
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build SQLite3 Multiple Ciphers
+        if: matrix.codec != 'none'
+        run: |
+          manifest=$(cargo +stable metadata --format-version 1 | jq -r '.packages[] | select(.name == "sqlite3mc-src") | .manifest_path')
+          source_dir=$(dirname "$manifest")
+          codec_dir="$GITHUB_WORKSPACE/target/codec"
+          mkdir -p "$codec_dir"
+          cc -O2 -fPIC -shared -DSQLITE_THREADSAFE=1 -DSQLITE_TEMP_STORE=2 \
+            -DSQLITE_ENABLE_COLUMN_METADATA \
+            "$source_dir/sqlite3mc/sqlite3mc_amalgamation.c" \
+            -o "$codec_dir/libsqlite3.so" -lm -ldl -pthread
+          {
+            echo "SQLITE3_LIB_DIR=$codec_dir"
+            echo "LD_LIBRARY_PATH=$codec_dir"
+            echo "SQLITE3_NO_PKG_CONFIG=1"
+          } >> "$GITHUB_ENV"
+      - name: Tests
+        run: cargo +stable test --release -p diesel-sqlite-cipher
       - name: Install coverage toolchain
         run: rustup toolchain install nightly --profile minimal --component llvm-tools-preview
       - name: Install cargo-llvm-cov
@@ -130,7 +167,7 @@ jobs:
           if-no-files-found: ignore
 
   sonar:
-    needs: [rust, mutants]
+    needs: [test, mutants]
     if: >-
       github.actor != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]' &&
@@ -185,3 +222,15 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.88
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Check minimum Rust version
+        run: cargo +1.88.0 check -p diesel-sqlite-cipher --lib
