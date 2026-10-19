@@ -6,19 +6,20 @@
 [![Mutation testing](https://img.shields.io/badge/mutation%20testing-cargo--mutants-blue)](https://mutants.rs/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/LucaCappelletti94/diesel-sqlite-cipher/blob/main/LICENSE)
 
-Typed `ATTACH ... KEY` for Diesel with `SQLCipher` or `SQLite3` Multiple Ciphers. `RawKey` accepts exactly 32 bytes, stores their textual raw-key encoding without a heap allocation, and zeroizes its storage on drop. Connections without an active page codec are rejected.
+Typed `PRAGMA key` and `ATTACH ... KEY` for Diesel with `SQLCipher` or `SQLite3` Multiple Ciphers. `RawKey` accepts exactly 32 bytes, stores their textual raw-key encoding without a heap allocation, and zeroizes its storage on drop. Both operations reject a connection without an active page codec.
 
 ```rust
 use diesel::{Connection, SqliteConnection};
-use diesel_sqlite_cipher::{Error, RawKey, SqliteCipherConnectionExt};
+use diesel_sqlite_cipher::{Error, Key, RawKey, SqliteCipherConnectionExt};
 
 # fn main() -> Result<(), Error> {
 let directory = tempfile::tempdir().unwrap();
-let path = directory.path().join("shared.db");
-let mut connection = SqliteConnection::establish(":memory:").unwrap();
+let main_path = directory.path().join("main.db");
+let shared_path = directory.path().join("shared.db");
+let mut connection = SqliteConnection::establish(main_path.to_str().unwrap()).unwrap();
 let key = RawKey::from_bytes([0x42; 32]);
-match connection.attach_database_with_key(path.to_str().unwrap(), "shared", &key) {
-    Ok(()) => {}
+match Key(&key).set(&mut connection, None) {
+    Ok(()) => connection.attach_database_with_key(shared_path.to_str().unwrap(), "shared", &key)?,
     Err(Error::CodecUnavailable) => eprintln!("An active page codec is required"),
     Err(error) => return Err(error),
 }
@@ -26,8 +27,8 @@ match connection.attach_database_with_key(path.to_str().unwrap(), "shared", &key
 # }
 ```
 
-The application selects the linked codec, for example through `libsqlite3-sys/bundled-sqlcipher`. `SQLite3` Multiple Ciphers requires file-backed encrypted databases with a raw-key-capable scheme and its codec `VFS`.
+The application selects the linked codec, for example through `libsqlite3-sys/bundled-sqlcipher`. `SQLite3` Multiple Ciphers requires file-backed databases with a raw-key-capable scheme and its codec `VFS`. Set the key before reading the schema, since assigning `PRAGMA key` does not authenticate an existing file.
 
-Paths, schema names, and keys are bound as text. Normal query diagnostics redact keys, and authorization remains active. Explicit raw SQLite tracing and authorizer callbacks are privileged, with native SQLite allocations and compiler temporaries outside the zeroization guarantee.
+Normal Diesel query diagnostics redact keys, and authorization checks remain active. Explicit raw SQLite tracing and authorizer callbacks are privileged and can inspect key-bearing SQL. Zeroization covers controlled Rust key buffers and the shared pragma serializer's SQL buffer, with SQLite allocations and compiler temporaries outside that guarantee.
 
-Codec detection uses the public pragma reader API on [Luca's Diesel fork](https://github.com/LucaCappelletti94/diesel/tree/sqlite-public-pragma). Applications must use the same Diesel Git source and branch so their connection types match.
+This crate requires the shared sensitive pragma API on [Luca's Diesel fork](https://github.com/LucaCappelletti94/diesel/tree/upstream/secret-safe-key-diagnostics). Applications must use the same Diesel Git source and branch so their connection types match.

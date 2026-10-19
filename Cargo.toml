@@ -11,7 +11,7 @@ publish = false
 
 [dependencies]
 arrayvec = { version = "0.7", features = ["zeroize"] }
-diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite-public-pragma", default-features = false, features = ["sqlite"] }
+diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "upstream/secret-safe-key-diagnostics", default-features = false, features = ["sqlite"] }
 thiserror = "2"
 zeroize = "1.8"
 
