@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DIESEL_SQLITE_CIPHER_TEST_CODEC: none
+      COVERAGE_FILE: target/coverage/none.lcov
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install Rust tools
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: cargo +stable fmt --check
+      - run: cargo +stable clippy -p diesel-sqlite-cipher --all-targets -- -D warnings
+      - run: cargo +stable test --release -p diesel-sqlite-cipher
+      - run: cargo +stable doc -p diesel-sqlite-cipher --no-deps
+      - name: Install coverage toolchain
+        run: rustup toolchain install nightly --profile minimal --component llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@671164c891d3e20f5b8ece04798d0154d1262d65
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - name: Coverage
+        run: |
+          mkdir -p "$(dirname "$COVERAGE_FILE")"
+          cargo +nightly llvm-cov --release -p diesel-sqlite-cipher --all-targets --no-report
+          cargo +nightly llvm-cov --release -p diesel-sqlite-cipher --doc --no-clean --lcov --output-path "$COVERAGE_FILE"
+      - name: Retain coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: coverage-${{ env.DIESEL_SQLITE_CIPHER_TEST_CODEC }}
+          path: ${{ env.COVERAGE_FILE }}
+          if-no-files-found: error
+      - name: Upload coverage to Codecov
+        if: >-
+          github.actor != 'dependabot[bot]' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          (github.event_name == 'push' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ env.COVERAGE_FILE }}
+          flags: ${{ env.DIESEL_SQLITE_CIPHER_TEST_CODEC }}
+          disable_search: true
+          fail_ci_if_error: true
+
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: 2
+      RUST_TEST_THREADS: 2
+      DIESEL_SQLITE_CIPHER_TEST_CODEC: sqlcipher
+      COVERAGE_FILE: target/coverage/sqlcipher.lcov
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libssl-dev
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup toolchain install nightly --profile minimal --component llvm-tools-preview
+      - name: Install test tools
+        uses: taiki-e/install-action@671164c891d3e20f5b8ece04798d0154d1262d65
+        with:
+          tool: cargo-mutants@27.1.0,cargo-llvm-cov@0.9.1
+      - name: Build SQLCipher
+        run: |
+          manifest=$(cargo +stable metadata --format-version 1 | jq -r '.packages[] | select(.name == "sqlcipher-src") | .manifest_path')
+          source_dir=$(dirname "$manifest")
+          codec_dir="$GITHUB_WORKSPACE/target/codec"
+          mkdir -p "$codec_dir"
+          cc -O2 -fPIC -shared -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 \
+            -DSQLITE_EXTRA_INIT=sqlcipher_extra_init \
+            -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown \
+            -DSQLCIPHER_CRYPTO_OPENSSL -DSQLITE_THREADSAFE=1 \
+            -DSQLITE_ENABLE_COLUMN_METADATA "$source_dir/sqlcipher/sqlcipher.c" \
+            -o "$codec_dir/libsqlite3.so" -lcrypto -lm -ldl -pthread
+          {
+            echo "SQLITE3_LIB_DIR=$codec_dir"
+            echo "LD_LIBRARY_PATH=$codec_dir"
+            echo "SQLITE3_NO_PKG_CONFIG=1"
+          } >> "$GITHUB_ENV"
+      - name: Mutation tests
+        run: taskset -c 0-7 nice -n 19 cargo +stable mutants --jobs 1 --jobserver-tasks 2 -p diesel-sqlite-cipher
+      - name: Coverage
+        run: |
+          mkdir -p "$(dirname "$COVERAGE_FILE")"
+          cargo +nightly llvm-cov --release -p diesel-sqlite-cipher --all-targets --no-report
+          cargo +nightly llvm-cov --release -p diesel-sqlite-cipher --doc --no-clean --lcov --output-path "$COVERAGE_FILE"
+      - name: Retain coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: coverage-${{ env.DIESEL_SQLITE_CIPHER_TEST_CODEC }}
+          path: ${{ env.COVERAGE_FILE }}
+          if-no-files-found: error
+      - name: Upload coverage to Codecov
+        if: >-
+          github.actor != 'dependabot[bot]' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          (github.event_name == 'push' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ${{ env.COVERAGE_FILE }}
+          flags: ${{ env.DIESEL_SQLITE_CIPHER_TEST_CODEC }}
+          disable_search: true
+          fail_ci_if_error: true
+      - name: Retain mutation reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mutants
+          path: mutants.out
+          if-no-files-found: ignore
+
+  sonar:
+    needs: [rust, mutants]
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      ((github.event_name == 'push' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check main-branch baseline
+        id: baseline
+        if: github.event_name == 'pull_request'
+        env:
+          MAIN_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          project_key=$(grep '^sonar.projectKey=' sonar-project.properties)
+          project_key=${project_key#sonar.projectKey=}
+          host_url=$(grep '^sonar.host.url=' sonar-project.properties)
+          host_url=${host_url#sonar.host.url=}
+          response=$(curl --fail --silent --show-error --connect-timeout 5 --max-time 30 \
+            --get --data-urlencode "project=$project_key" \
+            --data-urlencode "branch=$MAIN_BRANCH" --data-urlencode 'ps=1' \
+            "$host_url/api/project_analyses/search")
+          ready=$(jq -r '.analyses | length > 0' <<< "$response")
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          if [ "$ready" = false ]; then
+            echo "::notice::Sonar PR analysis waits for the main-branch baseline."
+          fi
+      - name: Install analysis tools
+        if: github.event_name == 'push' || steps.baseline.outputs.ready == 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y lcov
+          rustup toolchain install stable --profile minimal
+      - name: Download coverage reports
+        if: github.event_name == 'push' || steps.baseline.outputs.ready == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: coverage-*
+          path: target/coverage
+          merge-multiple: true
+      - name: Merge coverage reports
+        if: github.event_name == 'push' || steps.baseline.outputs.ready == 'true'
+        run: lcov --add-tracefile 'target/coverage/*.lcov' --output-file target/coverage.lcov
+      - name: Analyze with Sonar
+        if: github.event_name == 'push' || steps.baseline.outputs.ready == 'true'
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
