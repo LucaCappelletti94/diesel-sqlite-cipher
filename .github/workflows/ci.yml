@@ -93,7 +93,7 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
 
-  mutants:
+  sqlcipher:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -114,7 +114,7 @@ jobs:
       - name: Install test tools
         uses: taiki-e/install-action@671164c891d3e20f5b8ece04798d0154d1262d65
         with:
-          tool: cargo-mutants@27.1.0,cargo-llvm-cov@0.9.1
+          tool: cargo-llvm-cov@0.9.1
       - name: Build SQLCipher
         run: |
           manifest=$(cargo +stable metadata --format-version 1 | jq -r '.packages[] | select(.name == "sqlcipher-src") | .manifest_path')
@@ -132,8 +132,6 @@ jobs:
             echo "LD_LIBRARY_PATH=$codec_dir"
             echo "SQLITE3_NO_PKG_CONFIG=1"
           } >> "$GITHUB_ENV"
-      - name: Mutation tests
-        run: taskset -c 0-7 nice -n 19 cargo +stable mutants --jobs 1 --jobserver-tasks 2 -p diesel-sqlite-cipher
       - name: Coverage
         run: |
           mkdir -p "$(dirname "$COVERAGE_FILE")"
@@ -158,16 +156,8 @@ jobs:
           flags: ${{ env.DIESEL_SQLITE_CIPHER_TEST_CODEC }}
           disable_search: true
           fail_ci_if_error: true
-      - name: Retain mutation reports
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: mutants
-          path: mutants.out
-          if-no-files-found: ignore
-
   sonar:
-    needs: [test, mutants]
+    needs: [test, sqlcipher]
     if: >-
       github.actor != 'dependabot[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]' &&

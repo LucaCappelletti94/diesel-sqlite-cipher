@@ -1,0 +1,57 @@
+name: Weekly mutation testing
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: 2
+      RUST_TEST_THREADS: 2
+      DIESEL_SQLITE_CIPHER_TEST_CODEC: sqlcipher
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libssl-dev
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+      - name: Install test tools
+        uses: taiki-e/install-action@671164c891d3e20f5b8ece04798d0154d1262d65
+        with:
+          tool: cargo-mutants@27.1.0
+      - name: Build SQLCipher
+        run: |
+          manifest=$(cargo +stable metadata --format-version 1 | jq -r '.packages[] | select(.name == "sqlcipher-src") | .manifest_path')
+          source_dir=$(dirname "$manifest")
+          codec_dir="$GITHUB_WORKSPACE/target/codec"
+          mkdir -p "$codec_dir"
+          cc -O2 -fPIC -shared -DSQLITE_HAS_CODEC -DSQLITE_TEMP_STORE=2 \
+            -DSQLITE_EXTRA_INIT=sqlcipher_extra_init \
+            -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown \
+            -DSQLCIPHER_CRYPTO_OPENSSL -DSQLITE_THREADSAFE=1 \
+            -DSQLITE_ENABLE_COLUMN_METADATA "$source_dir/sqlcipher/sqlcipher.c" \
+            -o "$codec_dir/libsqlite3.so" -lcrypto -lm -ldl -pthread
+          {
+            echo "SQLITE3_LIB_DIR=$codec_dir"
+            echo "LD_LIBRARY_PATH=$codec_dir"
+            echo "SQLITE3_NO_PKG_CONFIG=1"
+          } >> "$GITHUB_ENV"
+      - name: Mutation tests
+        run: taskset -c 0-7 nice -n 19 cargo +stable mutants --jobs 1 --jobserver-tasks 2 -p diesel-sqlite-cipher
+      - name: Retain mutation reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mutants
+          path: mutants.out
+          if-no-files-found: ignore
