@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 description = "Typed raw-key statements for Diesel with SQLCipher and SQLite3 Multiple Ciphers"
-repository = "https://github.com/LucaCappelletti94/diesel-sqlite-cipher"
+repository = "https://github.com/connetto-rs/diesel-sqlite-cipher"
 readme = "README.md"
 publish = false
 
