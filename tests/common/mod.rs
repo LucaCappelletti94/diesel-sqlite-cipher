@@ -1,9 +1,11 @@
 use std::path::Path;
+use std::sync::Arc;
 
-use diesel::connection::SimpleConnection;
+use diesel::connection::{InstrumentationEvent, SimpleConnection};
 use diesel::prelude::*;
 use diesel::sqlite::pragma::{ConnectionPragma, PerConnection, Pragma, PragmaLiteral, WritePragma};
 use diesel_sqlite_cipher::{Error, RawKey, SqliteCipherConnectionExt};
+use parking_lot::Mutex;
 
 diesel::table! {
     proof (id) {
@@ -80,4 +82,24 @@ pub(super) fn create_independent_database(path: &Path) {
         .values((proof::id.eq(1), proof::payload.eq("independent raw key")))
         .execute(&mut connection)
         .unwrap();
+}
+
+pub(super) fn instrumentation_log() -> (
+    Arc<Mutex<Vec<String>>>,
+    impl Fn(InstrumentationEvent<'_>) + 'static,
+) {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let output = Arc::clone(&log);
+    (log, move |event: InstrumentationEvent<'_>| {
+        let mut output = output.lock();
+        output.push(format!("{event:?}"));
+        match event {
+            InstrumentationEvent::StartQuery { query, .. }
+            | InstrumentationEvent::FinishQuery { query, .. } => {
+                output.push(format!("{query}"));
+                output.push(format!("{query:?}"));
+            }
+            _ => {}
+        }
+    })
 }
