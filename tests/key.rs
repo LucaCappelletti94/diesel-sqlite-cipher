@@ -2,16 +2,13 @@
 
 mod common;
 
-use std::sync::Arc;
-
-use diesel::connection::{InstrumentationEvent, SimpleConnection};
+use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sql_types::Text;
 use diesel::sqlite::{AuthorizerContext, AuthorizerDecision};
 use diesel_sqlite_cipher::{Error, Key, RawKey};
-use parking_lot::Mutex;
 
-use common::{codec_available, connect, create_independent_database, proof};
+use common::{codec_available, connect, create_independent_database, instrumentation_log, proof};
 
 mod attached {
     diesel::table! {
@@ -162,20 +159,8 @@ fn successful_and_failed_key_assignments_keep_secrets_out_of_diagnostics() {
     let path = directory.path().join("source.db");
     create_independent_database(&path);
     let mut connection = connect(path.to_str().unwrap());
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let output = Arc::clone(&log);
-    connection.set_instrumentation(move |event: InstrumentationEvent<'_>| {
-        let mut output = output.lock();
-        output.push(format!("{event:?}"));
-        match event {
-            InstrumentationEvent::StartQuery { query, .. }
-            | InstrumentationEvent::FinishQuery { query, .. } => {
-                output.push(format!("{query}"));
-                output.push(format!("{query:?}"));
-            }
-            _ => {}
-        }
-    });
+    let (log, instrumentation) = instrumentation_log();
+    connection.set_instrumentation(instrumentation);
     let correct = RawKey::from_bytes([0xab; 32]);
     Key(&correct).set(&mut connection, None).unwrap();
     assert_eq!(
